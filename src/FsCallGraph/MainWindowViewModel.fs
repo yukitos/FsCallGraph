@@ -8,6 +8,8 @@ open System.Linq
 open System.Reflection
 open System.Windows.Input
 open Graphviz4Net.Graphs
+open Microsoft.Build.Evaluation
+open Microsoft.FSharp.Compiler.SourceCodeServices
 
 /// <summary>This class has no implementation because it's only for displaying an arrow on XAML.</summary>
 type Arrow() = class end
@@ -17,28 +19,28 @@ type Arrow() = class end
 type FunctionInfo =
     val propertyChanged : Event<PropertyChangedEventHandler, PropertyChangedEventArgs>
     val mutable name : string
-    val mutable fullname : string
+    val mutable fullName : string
 
     new() =
         {
             propertyChanged = Event<_,_>()
             name = String.Empty
-            fullname = String.Empty
+            fullName = String.Empty
         }
     
     override x.Equals(yobj) =
         match yobj with
-        | :? FunctionInfo as y -> x.fullname = y.fullname
+        | :? FunctionInfo as y -> x.fullName = y.fullName
         | _ -> false
 
-    override x.GetHashCode() = x.fullname.GetHashCode()
+    override x.GetHashCode() = x.fullName.GetHashCode()
 
     interface INotifyPropertyChanged with
         [<CLIEvent>]
         member x.PropertyChanged = x.propertyChanged.Publish
 
     interface IEquatable<FunctionInfo> with
-        member x.Equals(yobj) = x.fullname = yobj.fullname
+        member x.Equals(yobj) = x.fullName = yobj.fullName
 
     /// <summary>Simplified function name.</summary>
     member x.Name
@@ -49,9 +51,9 @@ type FunctionInfo =
                 x.propertyChanged.Trigger(x, new PropertyChangedEventArgs("Name"))
 
     /// <summary>Fully qualified function name.</summary>
-    member x.Fullname
-        with get() = x.fullname
-        and set(v) = x.fullname <- v
+    member x.FullName
+        with get() = x.fullName
+        and set(v) = x.fullName <- v
 
 /// <summary>View-Model object bound to the main window.</summary>
 type MainWindowViewModel =
@@ -71,22 +73,26 @@ type MainWindowViewModel =
         // For debugging
         then
 
-        // Add 10 function names and make relations between them randomly
-        
-        let functions = seq { for i in 1 .. 10 do yield new FunctionInfo(Name = "func" + i.ToString(), Fullname = "func" + i.ToString()) }
-        functions |> Seq.iter x.graph.AddVertex
+//        // Add 10 function names and make relations between them randomly
+//        
+//        let functions = seq { for i in 1 .. 10 do yield new FunctionInfo(Name = "func" + i.ToString(), FullName = "func" + i.ToString()) }
+//        functions |> Seq.iter x.graph.AddVertex
+//
+//        let (--->) f1 f2 =
+//            let i1 = Seq.nth f1 functions
+//            let i2 = Seq.nth f2 functions
+//            x.graph.AddEdge(new Edge<FunctionInfo>(i1, i2, new Arrow()))
+//        
+//        let r = new Random()
+//        for i in 0 .. 10 do
+//            let n1 = r.Next(10)
+//            let n2 = r.Next(10)
+//            if x.graph.Edges.Count(fun i -> i.Source = box (Seq.nth n1 functions) && i.Destination =box (Seq.nth n2 functions)) = 0 then
+//                n1 ---> n2
 
-        let (--->) f1 f2 =
-            let i1 = Seq.nth f1 functions
-            let i2 = Seq.nth f2 functions
-            x.graph.AddEdge(new Edge<FunctionInfo>(i1, i2, new Arrow()))
-        
-        let r = new Random()
-        for i in 0 .. 10 do
-            let n1 = r.Next(10)
-            let n2 = r.Next(10)
-            if x.graph.Edges.Count(fun i -> i.Source = box (Seq.nth n1 functions) && i.Destination =box (Seq.nth n2 functions)) = 0 then
-                n1 ---> n2
+        // HACK: Load FsCallGraph.fsproj for test
+        let projectFile = Path.Combine(x.GetAssemblyDirectory(), @"..\..\FsCallGraph.fsproj")
+        x.Load(projectFile)
 #endif
 
     interface INotifyPropertyChanged with
@@ -103,12 +109,14 @@ type MainWindowViewModel =
     member x.OpenCommand
         with get() = x.openCommand.Value
 
-    member private x.SearchGraphviz() =
+    member x.GetAssemblyDirectory() =
         let asm = Assembly.GetExecutingAssembly()
-        let asmdir =
-            match asm with
-            | null -> "."
-            | _ -> Path.GetDirectoryName(asm.Location)
+        match asm with
+        | null -> "."
+        | _ -> Path.GetDirectoryName(asm.Location)
+
+    member private x.SearchGraphviz() =
+        let asmdir = x.GetAssemblyDirectory()
         let baseDirs =
             [
                 Directory.GetCurrentDirectory()
@@ -126,10 +134,140 @@ type MainWindowViewModel =
         let canExecuteChanged = Event<_,_>()
         { new ICommand with
             member y.CanExecute(param) = true
-            member y.Execute(param) = x.Load()
             [<CLIEvent>]
-            member y.CanExecuteChanged = canExecuteChanged.Publish }
+            member y.CanExecuteChanged = canExecuteChanged.Publish
+            member y.Execute(param) =
+                // TODO:  implement here
+                x.Load(param.ToString())
+        }
 
-    member private x.Load() =
-        // TODO: implement here
-        do()
+    member private x.Load(projectFile) =
+        let checker = InteractiveChecker.Create()
+        
+        let toolsVersion = "12.0"
+        let globalProperties = new Dictionary<string, string>()
+        globalProperties.Add("VisualStudioVersion", toolsVersion)
+
+        let options = x.GetProjectOptionsFromProjectFile(projectFile, globalProperties, toolsVersion)
+        let projectOptions =
+            checker.GetProjectOptionsFromCommandLineArgs(projectFile, options)
+        let wholeProjectResults = checker.ParseAndCheckProject(projectOptions) |> Async.RunSynchronously
+
+        if wholeProjectResults.HasCriticalErrors then
+            // TODO: implement here
+            do()
+        else
+
+            let allMembersFunctionsAndValues (entities: IList<FSharpEntity>) =
+                [ for e in entities do
+                    for x in e.MembersFunctionsAndValues do
+                        yield x]
+            let fav = allMembersFunctionsAndValues wholeProjectResults.AssemblySignature.Entities
+            let set = new HashSet<FSharpMemberFunctionOrValue>()
+            
+            let idName (f:FSharpMemberFunctionOrValue) = f.FullName + "+" + f.CompiledName
+
+            // Add all symbols as vertex
+            for f in fav do
+                if not(set.Contains(f)) then
+                    let info = new FunctionInfo(Name = f.DisplayName, FullName = idName f)
+                    x.graph.AddVertex(info)
+                    set.Add(f) |> ignore
+                    System.Diagnostics.Debug.WriteLine("Added: " + info.FullName)
+            
+            // Add all references
+            for f in set do
+                let destVertex = x.graph.Vertices.First(fun i -> i.FullName = idName f)
+                let usesOfSymbol = wholeProjectResults.GetUsesOfSymbol(f)
+                for s in usesOfSymbol do
+                    if not s.IsFromDefinition then
+                        // TODO: How can I find the FSharpEntity/FSharpSymbol which uses this symbol?
+                        do()
+
+//                        let _,typed = checker.GetBackgroundCheckResultsForFileInProject(s.FileName, projectOptions) |> Async.RunSynchronously
+//                        let refSymbol = s.Symbol
+//                        match refSymbol with
+//                        | :? FSharpMemberFunctionOrValue as r ->
+//                            let sourceVertex = x.graph.Vertices.First(fun i -> i.fullName = idName r)
+//                            x.graph.AddEdge(new Edge<FunctionInfo>(sourceVertex, destVertex, new Arrow()))
+//                        | _ ->
+//                            // TODO: implement here
+//                            do()
+
+    member private x.GetProjectOptionsFromProjectFile(path, globalProperties, toolsVersion) =
+        let baseDirectory = Path.GetDirectoryName(path)
+        
+        let project = new Project(path, globalProperties, toolsVersion)
+        let properties = project.Properties
+        let references = project.Items.Where(fun i -> i.ItemType = "Reference")
+        let compiles = project.Items.Where(fun i -> i.ItemType = "Compile")
+        
+        let programFilesDir = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+        
+        let getProperty(props:ICollection<ProjectProperty>, name) =
+            let p = props.FirstOrDefault(fun i -> i.Name = name)
+            match p with
+            | null -> null
+            | x -> x.EvaluatedValue
+
+        let getPropertyAs(props, name, defaultValue, converter) =
+            let v = getProperty(props, name)
+            match v with
+            | null -> defaultValue
+            | x -> converter(x)
+        
+        let getPropertyAsBool(props, name) =
+            getPropertyAs(props, name, false, Convert.ToBoolean)
+
+        let getExtensionFromOutputType(outputTypeInLowerCase:string) =
+            match outputTypeInLowerCase with
+            | "exe" | "winexe" -> ".exe"
+            | "library" -> ".dll"
+            | "module" -> ".module"
+            | _ -> failwith "Unsupported OutputType: " + outputTypeInLowerCase
+
+        [|
+            yield "--simpleresolution"
+            yield "--noframework"
+            yield "--fullpaths"
+            yield "--flaterrors"
+            
+            let debugType = getProperty(properties, "DebugType")
+            yield "--debug:" + debugType
+            
+            if getPropertyAsBool(properties, "Optimize") then yield "--optimize+" else yield "--optimize-"
+            
+            let consts = getProperty(properties, "DefineConstants")
+            if not (String.IsNullOrEmpty(consts)) then
+                for c in consts.Split(';') do
+                    yield "--define:" + c
+            
+            yield "--warn:" + getProperty(properties, "WarningLevel")
+            
+            let docfile = getProperty(properties, "DocumentationFile")
+            if not (String.IsNullOrEmpty(docfile)) then
+                yield "--doc:" + Path.Combine(baseDirectory, docfile)
+            
+            let outputPath = getProperty(properties, "OutputPath")
+            let assemblyName = getProperty(properties, "AssemblyName")
+            let outputType = getProperty(properties, "OutputType").ToLower()
+            let ext = getExtensionFromOutputType(outputType)
+            yield "--out:" + Path.Combine(baseDirectory, outputPath) + assemblyName + ext
+
+            yield "--target:" + outputType
+
+            let refAssemblyBaseDir = Path.Combine(programFilesDir, "Reference Assemblies\\Microsoft")
+            let netFrameworkDir = Path.Combine(refAssemblyBaseDir, "Framework\\.NETFramework\\v4.0")
+            let fsharpDir = Path.Combine(refAssemblyBaseDir, "FSharp\\.NETFramework\\v4.0\\4.3.1.0")
+            for r in references do
+                let name = r.EvaluatedInclude.Split(',').[0]
+                let hintPath = r.GetMetadataValue("HintPath")
+                if String.IsNullOrEmpty(hintPath) then
+                    let dir = if name.ToLower() = "fsharp.core" then fsharpDir else netFrameworkDir
+                    yield "-r:" + Path.Combine(dir, name + ".dll")
+                else
+                    yield "-r:" + Path.Combine(baseDirectory, hintPath)
+
+            for f in compiles do
+                yield Path.Combine(baseDirectory, f.EvaluatedInclude)
+        |]
