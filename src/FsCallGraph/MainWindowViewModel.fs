@@ -9,6 +9,7 @@ open System.Reflection
 open System.Windows.Input
 open Graphviz4Net.Graphs
 open Microsoft.Build.Evaluation
+open Microsoft.FSharp.Compiler
 open Microsoft.FSharp.Compiler.SourceCodeServices
 
 /// <summary>This class has no implementation because it's only for displaying an arrow on XAML.</summary>
@@ -20,27 +21,35 @@ type FunctionInfo =
     val propertyChanged : Event<PropertyChangedEventHandler, PropertyChangedEventArgs>
     val mutable name : string
     val mutable fullName : string
+    val mutable compiledName : string
+    val mutable location : Range.range
 
     new() =
         {
             propertyChanged = Event<_,_>()
             name = String.Empty
             fullName = String.Empty
+            compiledName = String.Empty
+            location = Range.range.Zero
         }
     
     override x.Equals(yobj) =
         match yobj with
-        | :? FunctionInfo as y -> x.fullName = y.fullName
+        | :? FunctionInfo as y -> (x :> IEquatable<FunctionInfo>).Equals(y)
         | _ -> false
 
-    override x.GetHashCode() = x.fullName.GetHashCode()
+    override x.GetHashCode() =
+        (x.fullName + x.compiledName + x.location.ToString()).GetHashCode()
 
     interface INotifyPropertyChanged with
         [<CLIEvent>]
         member x.PropertyChanged = x.propertyChanged.Publish
 
     interface IEquatable<FunctionInfo> with
-        member x.Equals(yobj) = x.fullName = yobj.fullName
+        member x.Equals(y) =
+            x.fullName = y.fullName
+            && x.compiledName = y.compiledName
+            && x.location = y.location
 
     /// <summary>Simplified function name.</summary>
     member x.Name
@@ -54,6 +63,30 @@ type FunctionInfo =
     member x.FullName
         with get() = x.fullName
         and set(v) = x.fullName <- v
+
+    /// <summary>Compiled function/value name.</summary>
+    member x.CompiledName
+        with get() = x.compiledName
+        and set(v) = x.compiledName <- v
+
+    /// <summary>Location where this functions is declared.</summary>
+    member x.Location
+        with get() = x.location
+        and set(v) = x.location <- v
+
+    member x.DisplayName
+        with get() = x.Name
+
+    member x.DisplayFullName
+        with get() = x.FullName
+
+    member x.DisplayFileName
+        with get() = Path.GetFileName(x.location.FileName)
+
+    member x.DisplaySymbolLocation
+        with get() =
+            "(" + x.location.StartLine.ToString() + "," + x.location.StartColumn.ToString() + ")"
+            + "-(" + x.location.EndLine.ToString() + "," + x.location.EndColumn.ToString() + ")"
 
 /// <summary>View-Model object bound to the main window.</summary>
 type MainWindowViewModel =
@@ -165,19 +198,21 @@ type MainWindowViewModel =
             let fav = allMembersFunctionsAndValues wholeProjectResults.AssemblySignature.Entities
             let set = new HashSet<FSharpMemberFunctionOrValue>()
             
-            let idName (f:FSharpMemberFunctionOrValue) = f.FullName + "+" + f.CompiledName
-
             // Add all symbols as vertex
             for f in fav do
                 if not(set.Contains(f)) then
-                    let info = new FunctionInfo(Name = f.DisplayName, FullName = idName f)
+                    let info = new FunctionInfo(
+                                Name = f.DisplayName,
+                                FullName = f.FullName,
+                                CompiledName = f.CompiledName,
+                                Location = f.DeclarationLocation)
                     x.graph.AddVertex(info)
                     set.Add(f) |> ignore
                     System.Diagnostics.Debug.WriteLine("Added: " + info.FullName)
             
             // Add all references
             for f in set do
-                let destVertex = x.graph.Vertices.First(fun i -> i.FullName = idName f)
+                let destVertex = x.graph.Vertices.First(fun i -> i.Location = f.DeclarationLocation)
                 let usesOfSymbol = wholeProjectResults.GetUsesOfSymbol(f)
                 for s in usesOfSymbol do
                     if not s.IsFromDefinition then

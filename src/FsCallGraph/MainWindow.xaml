@@ -7,7 +7,33 @@
         Title="FsCallGraph">
     <Window.Resources>
         <DataTemplate DataType="{x:Type my:FunctionInfo}">
-            <TextBlock Text="{Binding Name}"/>
+            <Border BorderBrush="Black" BorderThickness="1" CornerRadius="3" Padding="5">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="auto"/>
+                        <ColumnDefinition Width="auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition/>
+                        <RowDefinition/>
+                        <RowDefinition/>
+                        <RowDefinition/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Name:" HorizontalAlignment="Right" Margin="0 0 5 0"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DisplayName}"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Full Name:" HorizontalAlignment="Right" Margin="0 0 5 0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DisplayFullName}"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="File:" HorizontalAlignment="Right" Margin="0 0 5 0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DisplayFileName}"/>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Symbol Location:" HorizontalAlignment="Right" Margin="0 0 5 0"/>
+                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DisplaySymbolLocation}"/>
+
+                </Grid>
+            </Border>
         </DataTemplate>
         
         <DataTemplate DataType="{x:Type my:Arrow}">
