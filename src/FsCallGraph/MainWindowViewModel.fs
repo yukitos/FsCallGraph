@@ -10,6 +10,7 @@ open System.Windows.Input
 open Graphviz4Net.Graphs
 open Microsoft.Build.Evaluation
 open Microsoft.FSharp.Compiler
+open Microsoft.FSharp.Compiler.Ast
 open Microsoft.FSharp.Compiler.SourceCodeServices
 
 /// <summary>This class has no implementation because it's only for displaying an arrow on XAML.</summary>
@@ -106,23 +107,6 @@ type MainWindowViewModel =
         // For debugging
         then
 
-//        // Add 10 function names and make relations between them randomly
-//        
-//        let functions = seq { for i in 1 .. 10 do yield new FunctionInfo(Name = "func" + i.ToString(), FullName = "func" + i.ToString()) }
-//        functions |> Seq.iter x.graph.AddVertex
-//
-//        let (--->) f1 f2 =
-//            let i1 = Seq.nth f1 functions
-//            let i2 = Seq.nth f2 functions
-//            x.graph.AddEdge(new Edge<FunctionInfo>(i1, i2, new Arrow()))
-//        
-//        let r = new Random()
-//        for i in 0 .. 10 do
-//            let n1 = r.Next(10)
-//            let n2 = r.Next(10)
-//            if x.graph.Edges.Count(fun i -> i.Source = box (Seq.nth n1 functions) && i.Destination =box (Seq.nth n2 functions)) = 0 then
-//                n1 ---> n2
-
         // HACK: Load FsCallGraph.fsproj for test
         let projectFile = Path.Combine(x.GetAssemblyDirectory(), @"..\..\FsCallGraph.fsproj")
         x.Load(projectFile)
@@ -170,8 +154,9 @@ type MainWindowViewModel =
             [<CLIEvent>]
             member y.CanExecuteChanged = canExecuteChanged.Publish
             member y.Execute(param) =
-                // TODO:  implement here
-                x.Load(param.ToString())
+                // TODO: implement here
+                let projectFile = Path.Combine(x.GetAssemblyDirectory(), @"..\..\FsCallGraph.fsproj")
+                x.Load(projectFile)
         }
 
     member private x.Load(projectFile) =
@@ -184,7 +169,9 @@ type MainWindowViewModel =
         let options = x.GetProjectOptionsFromProjectFile(projectFile, globalProperties, toolsVersion)
         let projectOptions =
             checker.GetProjectOptionsFromCommandLineArgs(projectFile, options)
-        let wholeProjectResults = checker.ParseAndCheckProject(projectOptions) |> Async.RunSynchronously
+        let wholeProjectResults =
+            checker.ParseAndCheckProject(projectOptions)
+            |> Async.RunSynchronously
 
         if wholeProjectResults.HasCriticalErrors then
             // TODO: implement here
@@ -208,26 +195,86 @@ type MainWindowViewModel =
                                 Location = f.DeclarationLocation)
                     x.graph.AddVertex(info)
                     set.Add(f) |> ignore
-                    System.Diagnostics.Debug.WriteLine("Added: " + info.FullName)
+
+            let findLocationInMembers members loc =
+                members
+                |> Seq.choose(fun m ->
+                    match m with
+                    | SynMemberDefn.Member(_, r)
+                    | SynMemberDefn.LetBindings(_, _, _, r)
+                    | SynMemberDefn.ImplicitCtor(_, _, _, _, r)
+                    | SynMemberDefn.AutoProperty(_, _, _, _, _, _, _, _, _, _, r) ->
+                        let ret = Range.rangeContainsRange r loc
+                        if ret then Some(m)
+                        else None
+                    | _ -> None)
+
+            let findLocationInTypes types loc =
+                types
+                |> Seq.choose(fun t ->
+                    let (TypeDefn(_, repr, _, _)) = t
+                    match repr with
+                    | SynTypeDefnRepr.ObjectModel(_, members, _) ->
+                        let r = findLocationInMembers members loc
+                        if Seq.length r = 1 then Some(Seq.nth 0 r)
+                        else None
+                    | _ -> None)
+
+            let findLocationInDeclarations decls loc =
+                decls
+                |> Seq.choose(fun d ->
+                    match d with
+                    | SynModuleDecl.Let(isRec, bindings, range) ->
+                        for binding in bindings do
+                            let (Binding(access, kind, inlin, mutabl, attrs, xmlDoc, data, pat, retInfo, body, m, sp)) = binding
+                            // TODO: need to find symbol location from top level let bindings
+                            do()
+                        None
+                    | SynModuleDecl.Types(types, range) ->
+                        let r = findLocationInTypes types loc
+                        if Seq.length r = 1 then Some(Seq.nth 0 r)
+                        else None
+                    | _ ->
+                        None)
             
+            let findLocationInModulesAndNamespaces modulesOrNss loc =
+                let r = modulesOrNss
+                        |> List.choose(fun moduleOrNs ->
+                            let (SynModuleOrNamespace(_, _, decls, _, _, _, _)) = moduleOrNs
+                            let r = findLocationInDeclarations decls loc
+                            if Seq.length r = 1 then Some(Seq.nth 0 r)
+                            else None)
+                if List.length r = 1 then Some(List.nth r 0)
+                else None
+
             // Add all references
             for f in set do
                 let destVertex = x.graph.Vertices.First(fun i -> i.Location = f.DeclarationLocation)
                 let usesOfSymbol = wholeProjectResults.GetUsesOfSymbol(f)
                 for s in usesOfSymbol do
                     if not s.IsFromDefinition then
-                        // TODO: How can I find the FSharpEntity/FSharpSymbol which uses this symbol?
+                        let loc = s.Symbol.DeclarationLocation.Value
+                        let fileLines = File.ReadAllLines(loc.FileName)
+                        let parseResults, checkFileResults =
+                            checker.GetBackgroundCheckResultsForFileInProject(loc.FileName, projectOptions)
+                            |> Async.RunSynchronously
+                        let tree = parseResults.ParseTree
+                        match tree.Value with
+                        | ParsedInput.ImplFile(implFile) ->
+                            let (ParsedImplFileInput(_, _, _, _, _, modules, _)) = implFile
+                            let r = findLocationInModulesAndNamespaces modules loc
+                            if Option.isSome r then
+                                match r.Value with
+                                | SynMemberDefn.Member(binding, range) ->
+                                    let (Binding(access, kind, inlin, mutabl, attrs, xmlDoc, data, pat, retInfo, body, m, sp)) = binding
+                                    let s = checkFileResults.GetSymbolAtLocationAlternate(range.StartLine, range.EndColumn, fileLines.[range.StartLine-1], [])
+                                    do()
+                                | _ -> 
+                                    do()
+                                do()
+                            do()
+                        | _ -> failwith "*.fsi is not supported."
                         do()
-
-//                        let _,typed = checker.GetBackgroundCheckResultsForFileInProject(s.FileName, projectOptions) |> Async.RunSynchronously
-//                        let refSymbol = s.Symbol
-//                        match refSymbol with
-//                        | :? FSharpMemberFunctionOrValue as r ->
-//                            let sourceVertex = x.graph.Vertices.First(fun i -> i.fullName = idName r)
-//                            x.graph.AddEdge(new Edge<FunctionInfo>(sourceVertex, destVertex, new Arrow()))
-//                        | _ ->
-//                            // TODO: implement here
-//                            do()
 
     member private x.GetProjectOptionsFromProjectFile(path, globalProperties, toolsVersion) =
         let baseDirectory = Path.GetDirectoryName(path)
