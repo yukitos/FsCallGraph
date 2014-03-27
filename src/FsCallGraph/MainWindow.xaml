@@ -65,23 +65,27 @@
             </MenuItem>
         </Menu>
     
-        <WPF:GraphLayout Grid.Column="0" Grid.Row="1"
-                UseContentPresenterForAllElements="True"
-                LogGraphvizOutput="True"
-                DotExecutablePath="{Binding GraphvizPath}"
-                Graph="{Binding Graph}"
-                x:Name="GraphLayout">
-            <WPF:GraphLayout.Resources>
-                <Style TargetType="ProgressBar">
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="ProgressBar">
-                                <TextBlock Foreground="Black">Generating the layout...</TextBlock>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-            </WPF:GraphLayout.Resources>
-        </WPF:GraphLayout>
+        <ScrollViewer Grid.Column="0" Grid.Row="1"
+                      VerticalScrollBarVisibility="Visible"
+                      HorizontalScrollBarVisibility="Visible">
+            <WPF:GraphLayout
+                    UseContentPresenterForAllElements="True"
+                    LogGraphvizOutput="True"
+                    DotExecutablePath="{Binding GraphvizPath}"
+                    Graph="{Binding Graph}"
+                    x:Name="GraphLayout">
+                <WPF:GraphLayout.Resources>
+                    <Style TargetType="ProgressBar">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ProgressBar">
+                                    <TextBlock Foreground="Black">Generating the layout...</TextBlock>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </WPF:GraphLayout.Resources>
+            </WPF:GraphLayout>
+        </ScrollViewer>
     </Grid>
 </Window>

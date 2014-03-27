@@ -247,34 +247,74 @@ type MainWindowViewModel =
                 if List.length r = 1 then Some(List.nth r 0)
                 else None
 
+            let getRangeText (range:Range.range) =
+                let lines = File.ReadAllLines(range.FileName)
+                if range.StartLine = range.EndLine then
+                    let line = lines.[range.StartLine-1]
+                    line.Substring(range.StartColumn, range.EndColumn-range.StartColumn)
+                else
+                    let textLines =
+                        [ for n in range.StartLine .. range.EndLine do
+                            let line = lines.[n-1]
+                            if n = range.StartLine then
+                                yield line.Substring(range.StartColumn)
+                            else if n = range.EndLine then
+                                yield line.Substring(0, range.EndColumn)
+                            else
+                                yield line]
+                        |> List.toArray
+                    String.Join(Environment.NewLine, textLines)
+
             // Add all references
             for f in set do
                 let destVertex = x.graph.Vertices.First(fun i -> i.Location = f.DeclarationLocation)
                 let usesOfSymbol = wholeProjectResults.GetUsesOfSymbol(f)
-                for s in usesOfSymbol do
-                    if not s.IsFromDefinition then
-                        let loc = s.Symbol.DeclarationLocation.Value
-                        let fileLines = File.ReadAllLines(loc.FileName)
-                        let parseResults, checkFileResults =
-                            checker.GetBackgroundCheckResultsForFileInProject(loc.FileName, projectOptions)
-                            |> Async.RunSynchronously
-                        let tree = parseResults.ParseTree
-                        match tree.Value with
-                        | ParsedInput.ImplFile(implFile) ->
-                            let (ParsedImplFileInput(_, _, _, _, _, modules, _)) = implFile
-                            let r = findLocationInModulesAndNamespaces modules loc
-                            if Option.isSome r then
-                                match r.Value with
-                                | SynMemberDefn.Member(binding, range) ->
-                                    let (Binding(access, kind, inlin, mutabl, attrs, xmlDoc, data, pat, retInfo, body, m, sp)) = binding
-                                    let s = checkFileResults.GetSymbolAtLocationAlternate(range.StartLine, range.EndColumn, fileLines.[range.StartLine-1], [])
-                                    do()
-                                | _ -> 
-                                    do()
+                for s in usesOfSymbol.Where(fun i -> not i.IsFromDefinition) do
+                    //System.Diagnostics.Debug.WriteLine(s.RangeAlternate.ToShortString() + "-->" + f.DeclarationLocation.ToShortString())
+                    //System.Diagnostics.Debug.WriteLine((getRangeText s.RangeAlternate) + "-->" + (getRangeText f.DeclarationLocation))
+                    
+                    let loc = s.Symbol.DeclarationLocation.Value
+                    System.Diagnostics.Debug.WriteLine("Dest: " + getRangeText loc)
+                    
+                    // Trying to detect who is invoking this symbol
+                    
+                    let fileLines = File.ReadAllLines(loc.FileName)
+                    
+                    let parseResults, checkFileResults =
+                        checker.GetBackgroundCheckResultsForFileInProject(loc.FileName, projectOptions)
+                        |> Async.RunSynchronously
+
+                    let line = fileLines.[s.RangeAlternate.StartLine-1]
+                    let symbol = checkFileResults.GetSymbolAtLocationAlternate(s.RangeAlternate.StartLine, s.RangeAlternate.EndColumn, line, [ getRangeText s.RangeAlternate ])
+                    
+                    let tree = parseResults.ParseTree
+                    match tree.Value with
+                    | ParsedInput.ImplFile(implFile) ->
+                        let (ParsedImplFileInput(_, _, _, _, _, modules, _)) = implFile
+                        let r = findLocationInModulesAndNamespaces modules s.RangeAlternate
+                        if Option.isSome r then
+                            match r.Value with
+                            | SynMemberDefn.Member(binding, _) ->
+                                let (Binding(access, kind, inlin, mutabl, attrs, xmlDoc, data, pat, retInfo, body, m, sp)) = binding
+                                match pat with
+                                | SynPat.LongIdent(ident, b, c, d, e, range) ->
+                                    let line = fileLines.[range.StartLine-1] + Environment.NewLine
+                                    let sym =
+                                        if ident.Lid.Length > 1 then ident.Lid.[1]
+                                        else ident.Lid.[0]
+                                    let symbolName = sym.idText
+                                    let symbol = checkFileResults.GetSymbolAtLocationAlternate(range.StartLine, range.EndColumn, line, [symbolName])
+                                    if Option.isSome symbol then
+                                        match symbol.Value with
+                                        | :? FSharpMemberFunctionOrValue as y -> 
+                                            if set.Contains(y) then
+                                                System.Diagnostics.Debug.WriteLine("Source: " + getRangeText y.DeclarationLocation)
+                                                let srcVertex = x.graph.Vertices.First(fun i -> i.Location = y.DeclarationLocation)
+                                                x.graph.AddEdge(new Edge<FunctionInfo>(srcVertex, destVertex, new Arrow()))
+                                        | _ -> do()
+                            | _ -> 
                                 do()
-                            do()
-                        | _ -> failwith "*.fsi is not supported."
-                        do()
+                    | _ -> failwith "*.fsi is not supported."
 
     member private x.GetProjectOptionsFromProjectFile(path, globalProperties, toolsVersion) =
         let baseDirectory = Path.GetDirectoryName(path)
