@@ -75,7 +75,7 @@
     <Compile Include="Program.fs" />
     <None Include="App.config" />
     <Resource Include="MainWindow.xaml" />
-    <None Include="..\Readme.md">
+    <None Include="..\..\Readme.md">
       <Link>Readme.md</Link>
     </None>
     <None Include="packages.config" />

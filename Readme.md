@@ -4,7 +4,7 @@
 **NOTE**
 
 There's no working functions yet.
-Simply can demonstrate [Graphviz4Net](http://graphviz4net.codeplex.com/) functions.
+Simply can load its own fsproj and show callgraph, but might not work for other fsproj.
 
 If you want to try FsCallGraph, you need to put [Graphviz](http://www.graphviz.org/) binary next to FsCallGraph.exe manually.
 
@@ -16,4 +16,4 @@ If you want to try FsCallGraph, you need to put [Graphviz](http://www.graphviz.o
 Screenshot
 ----------
 
-![Sample screenshot 01](img/ss01.png)
+![Sample screenshot 01](img/ss03.png)
